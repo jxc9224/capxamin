@@ -2,10 +2,9 @@ import datetime, os, sys
 import numpy, numpy.typing, pdfreader
 import matplotlib.pyplot as pyplot
 
-CAPSIM_START_YEAR = 2022
-CAPSIM_GAME_ID = 'C133749'
-CAPSIM_DATE_FORMAT : str = '%m/%d/%Y'
-CAPSIM_PAGE_TERMINATOR : str = 'CAPSTONE ® COURIER'
+CAPSIM_START_YEAR : int = 2022
+CAPSIM_GAME_ID : str = 'C133749'
+CAPSIM_TEAM_NAME : str = 'Andrews'
 
 SEGMENT_INFO = {
     'total_industry_unit_demand': numpy.array([], dtype=int),
@@ -265,6 +264,8 @@ ANNUAL_REPORT = {
 }
 
 NULL_STR = 'n/a'
+DATE_FORMAT : str = '%m/%d/%Y'
+PAGE_TERMINATOR : str = 'CAPSTONE ® COURIER'
 
 def get_next_str(raw : list, start : int):
     for index in range(start, len(raw)):
@@ -293,7 +294,7 @@ def get_next_val(raw : list, start : int):
         else:
             # datetime value
             try:
-                return index + 1, datetime.datetime.strptime(raw[index], CAPSIM_DATE_FORMAT).strftime(CAPSIM_DATE_FORMAT)
+                return index + 1, datetime.datetime.strptime(raw[index], DATE_FORMAT).strftime(DATE_FORMAT)
             except:
                 # base case: float/int value
                 # if it's not this then it's nothing useful
@@ -368,7 +369,7 @@ def main(folder_path : str):
             primary_seg : str = NULL_STR
             product_name : str = NULL_STR
             #print('> production analysis')
-            while index < len(raw) and not raw[index] == CAPSIM_PAGE_TERMINATOR:
+            while index < len(raw) and not raw[index] == PAGE_TERMINATOR:
                 index, product_name = get_next_str(raw, index)
                 index, primary_seg = get_next_str(raw, index)
                 company_name = COMPANY_PRODUCT_MAP[product_name[0:1]]
@@ -422,7 +423,7 @@ def main(folder_path : str):
                 numpy.append(market_seg_data['next_year_segment_growth_rate'], value)
                 #print(market_segment, 'next_year_segment_growth_rate', value)
                 # customer buying criteria
-                # capsim seems to mix the order between each segment
+                # capsim seems to mix the order of these between each segment
                 # bruteforce the order for convenience
                 criteria_order : list = [ '1', '2', '3', '4' ]
                 # age
@@ -492,7 +493,7 @@ def main(folder_path : str):
                         pass
                 # product specs
                 index = raw.index('\nSurvey') + 1
-                while index < len(raw) and not raw[index] == CAPSIM_PAGE_TERMINATOR:
+                while index < len(raw) and not raw[index] == PAGE_TERMINATOR:
                     index, product_name = get_next_str(raw, index)
                     company_name = COMPANY_PRODUCT_MAP[product_name[0:1]]
                     company_data = COMPANIES[company_name]
@@ -509,23 +510,46 @@ def main(folder_path : str):
             viewer.render()
             raw = viewer.canvas.strings
             index = raw.index('100.0%', raw.index('100.0%') + 1) + 1
-            print('> market share')
+            #print('> market share')
             # HR/TQM report
             viewer.navigate(12)
             viewer.render()
             raw = viewer.canvas.strings
             # HR section
-            print('> HR report')
+            #print('> HR report')
             index = raw.index(' Needed Complement')
             # TQM section
-            print('> TQM report')
+            #print('> TQM report')
             index = raw.index(' CPI Systems')
-           
     # step 2: process
-    #numpy.set_printoptions(threshold=numpy.inf)
-    #print(COMPANIES)
-    #print(COMPANIES['Andrews']['financial']['net_income'])
-
+    running : bool = True
+    user_input : str = None
+    print('Welcome to CapCoAnalyze')
+    print('Enter a command to get started, or "help" to list available commands')
+    commands : dict = None
+    commands = {
+        'help': {
+            'desc': 'lists available commands',
+            'proc': (lambda : (
+                for cmd in commands.keys():
+                    print(cmd + ' : ' + commands[cmd]['desc'])
+            ))
+        },
+        'test': {
+            'desc': 'prints the word "test"'
+            'proc': (lambda: (
+                print('test')
+            ))
+        }
+    }
+    while running = True:
+        user_input = input('> ').lower()
+        if user_input in commands.keys():
+            cmd : dict = commands[user_input]
+            proc = cmd['proc']
+            proc()
+        else:
+            print('Not a valid command. Use "help" to list available commands')
 
 if __name__ == '__main__':
     main(sys.argv[1])
