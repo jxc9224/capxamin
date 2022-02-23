@@ -1,0 +1,31 @@
+{
+    "Andrews": {
+        "color": "purple",
+        "marker": "^"
+    },
+
+    "Baldwin": {
+        "color": "red",
+        "marker": "o"
+    },
+
+    "Chester": {
+        "color": "yellow",
+        "marker": "v"
+    },
+
+    "Digby": {
+        "color": "blue",
+        "marker": "s"
+    },
+
+    "Erie": {
+        "color": "green",
+        "marker": "<"
+    },
+
+    "Ferris": {
+        "color": "orange",
+        "marker": "D"
+    }
+}
