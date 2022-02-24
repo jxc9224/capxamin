@@ -1,5 +1,5 @@
 from copy import deepcopy
-import datetime, json, numpy, os, sys
+import datetime, json, math, numpy, os, sys
 import matplotlib.pyplot as pyplot
 import pdfreader # https://pdfreader.readthedocs.io/en/latest/
 import PyInquirer # https://github.com/CITGuru/PyInquirer
@@ -274,6 +274,7 @@ CONSOLE_STYLE = PyInquirer.style_from_dict({
     PyInquirer.Token.Question: '',
 })
 
+JSON_EXT : str = '.cx.json'
 NULL_STR : str = 'n/a'
 MAX_NUM_ROUNDS : int = 8
 DATE_FORMAT : str = '%m/%d/%Y'
@@ -335,8 +336,8 @@ def load_folder(folder_path : str):
     value : int | float | datetime.datetime = None
     viewer : pdfreader.SimplePDFViewer = None
     file_count : int = 0
-    round_number : int = 0
-    round_year_map : dict[int, int] = { }
+    round_years : list = [ ]
+    round_numbers : list = [ ]
     # start scan on input directory
     for file_path in os.scandir(folder_path):
         # skip over non pdf files
@@ -355,9 +356,13 @@ def load_folder(folder_path : str):
             raw = viewer.canvas.strings
             # first, get the round number & year
             this_round : int = int(raw[0][-1:])
+            if this_round == 0:
+                print('Found file for Round Zero. Ignoring')
+                file.close()
+                continue
             this_year : int = int(raw[2])
-            round_year_map[this_round] = this_year
-            round_number = max(round_number, this_round)
+            round_numbers.append(this_round)
+            round_years.append(this_year)
             print('Processing Capstone Courier: Round {0}, Year {1}'.format(this_round, this_year))
             # start data collection
             index = raw.index(' ROS') + 1
@@ -403,7 +408,7 @@ def load_folder(folder_path : str):
             # product specs
             primary_seg : str = NULL_STR
             product_name : str = NULL_STR
-            print('> production analysis')
+            #print('> production analysis')
             while index < len(raw) and not raw[index] == PAGE_TERMINATOR:
                 index, product_name = get_next_str(raw, index)
                 if raw[index] == '0' and raw[index + 1] == '0':
@@ -429,10 +434,10 @@ def load_folder(folder_path : str):
                 for category in PRODUCT_INFO['production_analysis'].keys():
                     index, value = get_next_val(raw, index)
                     product_analysis = product_data['production_analysis']
-                    print(company_name, product_name, category, this_year, index, value)
                     if not value == -1:
                         product_analysis[category].append(value)
                     else:
+                        print(company_name, product_name, category, this_year, index, value)
                         print(raw)
                         exit()
             #print('> segment analysis')
@@ -568,12 +573,9 @@ def load_folder(folder_path : str):
             index = raw.index(' CPI Systems')
         file_count = file_count + 1
     if file_count < 2:
-        print('Program needs at least 2 files to perform analysis')
+        print('Program needs at least 2 rounds to perform analysis')
         exit()
-    elif round_number == 0:
-        print('Cannot perform analysis on only Round 0 (zero)')
-        exit()
-    return round_number, round_year_map[round_number]
+    return round_numbers, round_years
 
 def load_file(file_path : str):
     global ANNUAL_REPORT
@@ -583,29 +585,31 @@ def load_file(file_path : str):
     with open(file_path, 'rb') as file:
         json_data = json.loads(file.read())
     keys_exist = lambda *keys: False not in list(map(lambda key: key.lower() in json_data.keys(), keys))
-    if not keys_exist('round_year', 'round_number', 'company_data', 'market_data', 'annual_report'):
+    if not keys_exist('round_years', 'round_numbers', 'company_data', 'market_data', 'annual_report'):
         print('not a valid json export file')
         exit()
     def parse_table(json_table : dict, obj_table : dict):
         for key in json_table.keys():
             if not key in obj_table.keys():
-                print('unknown json key `{0}` encountered. not a valid json file'.format(key, json_table))
-                exit()
-            if type(json_table[key]) == 'dict':
+                if type(json_table[key]) is dict:
+                    obj_table[key] = { }
+                elif type(json_table[key]) is list:
+                    obj_table[key] = [ ]
+            if type(json_table[key]) is dict:
                 parse_table(json_table[key], obj_table[key])
+            elif type(json_table[key]) is list:
+                obj_table[key].extend(json_table[key])
             else:
                 obj_table[key] = json_table[key]
     parse_table(json_data['annual_report'], ANNUAL_REPORT)
     parse_table(json_data['company_data'], COMPANIES)
     parse_table(json_data['market_data'], MARKET_SEGMENTS)
-    round_year : int = int(json_data['round_year'])
-    round_number : int = int(json_data['round_number'])
-    print('Loading data for Round {0}, Year {1}'.format(round_number, round_year))
-    return round_number, round_year
+    round_years : list = json_data['round_years']
+    round_numbers : list = json_data['round_numbers']
+    print('Loading data for Rounds {0}, Years {1}'.format(round_numbers, round_years))
+    return round_numbers, round_years
 
-def main(round_number : int, round_year : int):
-    round_years : list[int] = [ year for year in range(round_year - round_number, round_year) ]
-    round_numbers : list[int] = [ number for number in range(0, round_number) ]
+def main(round_numbers : list, round_years : list):
     commands : dict = None
     # commands
     # command_help: lists available commands
@@ -635,7 +639,7 @@ def main(round_number : int, round_year : int):
                     print('* {0}'.format(market_segment))
                 print('or enter "back" to choose a context')
                 while segment_choice is None:
-                    user_choice = input('cca>product> ').lower()
+                    user_choice = input('>>>product> ').lower()
                     if user_choice == 'back':
                         return command_product('segment')
                     elif user_choice in segment_list:
@@ -645,10 +649,10 @@ def main(round_number : int, round_year : int):
             # capitalize the first letter
             segment_choice = segment_choice.capitalize()
             display_trends : bool = None
-            if round_number < MAX_NUM_ROUNDS:
+            if max(round_numbers) < MAX_NUM_ROUNDS:
                 print('would you like to graph trend lines for future rounds? (y/n)')
                 while display_trends is None:
-                    user_choice = input('cca>product> ').lower()
+                    user_choice = input('>>>product> ').lower()
                     # "yes or no" but anything other than an explicit yes is a no
                     # this is a good rule for life in general
                     if user_choice[0] == 'y':
@@ -668,17 +672,17 @@ def main(round_number : int, round_year : int):
                             'name': field_name,
                             'value': '{0}/{1}'.format(category_name, field_name)
                         })
+            validate_fields = lambda chosen_fields: 'must choose at least one field to examine' if len(chosen_fields) < 1 else True
             chosen_fields = PyInquirer.prompt([
                 {
                     'type': 'checkbox',
                     'message': 'Select product fields to display',
                     'name': 'product_fields',
                     'choices': product_fields,
-                    'validate': lambda chosen_fields: \
-                        'must choose at least one field to display' if len(chosen_fields) == 0 else True
+                    'validate': validate_fields
                 }
             ], style = CONSOLE_STYLE)
-            graph_products : dict[dict] = { }
+            graph : dict[dict] = { }
             for chosen_field in chosen_fields['product_fields']:
                 [category_name, field_name] = chosen_field.split('/')
                 for company_name in COMPANIES:
@@ -687,40 +691,73 @@ def main(round_number : int, round_year : int):
                         product_data = company_products[product_key]
                         if product_data['primary_segment'] == segment_choice:
                             product_name = product_data['product_name']
-                            if not chosen_field in graph_products.keys():
-                                graph_products[chosen_field] = { }
+                            if not chosen_field in graph.keys():
+                                graph[chosen_field] = { }
                             field_data = product_data[category_name][field_name]
-                            graph_products[chosen_field][product_name] = field_data
-                            print('{0} -> {1}'.format(product_name, chosen_field))
-                            print(field_data)
+                            graph[chosen_field][product_name] = field_data
             pyplot_settings : dict = None
             with open('pyplot.json', 'rb') as file:
                 pyplot_settings = json.loads(file.read())
-            x_label, x_data = 'round #', round_numbers
-            for field_name in graph_products.keys():
-                field_data = graph_products[field_name]
-                graph, axes = pyplot.subplots(figsize=(5, 3))
-                axes.set_title('segment: {0}'.format(segment_choice))
-                axes.legend(loc='best')
-                axes.set_xlabel(x_label)
-                axes.set_ylabel(field_name)
-                axes.set_xlim(xmin=x_data[0], xmax=x_data[-1])
+            x_label, x_data_base = 'round #', round_numbers
+            x_data_origin_size = len(x_data_base)
+            pyplot.figure()
+            num_fields : int = len(graph.keys())
+            graph_ncols : int = math.ceil(num_fields / 2)
+            graph_nrows : int = math.floor(num_fields / 2)
+            for field_name in graph.keys():
+                field_data = graph[field_name]
+                plot_handles : list = [ ]
+                plot_labels : list = [ ]
+                y_min : float = 2147483647.0
+                y_max : float = -2147483647.0
+                field_index : int = list(key for key in graph.keys()).index(field_name)
+                pyplot.subplot(graph_nrows, graph_ncols, 1 + field_index)
                 for product_name in field_data.keys():
-                    company_name = COMPANY_PRODUCT_MAP[product_name[0:1]]
-                    plot_settings = pyplot_settings[company_name]
-                    plot_color = plot_settings['color']
-                    plot_marker = plot_settings['marker']
-                    product_field_data = field_data[product_name]
-                    axes.plot(x_data, product_field_data, color=plot_color, linestyle='solid',
-                        marker=plot_marker, linewidth=2, markersize=12)
+                    # graph data
+                    plot_labels.append(product_name)
+                    x_data : list = x_data_base.copy()
+                    y_data : list = field_data[product_name]
+                    # visual data
+                    company_name : str = COMPANY_PRODUCT_MAP[product_name[0:1]]
+                    plot_settings : dict = pyplot_settings[company_name]
+                    plot_color : str = plot_settings['color']
+                    plot_marker : str = plot_settings['marker']
+                    # calculate trend data
                     if display_trends is True:
-                        trend = numpy.poly1d(numpy.polyfit(x_data, product_field_data, 3))
-                        trend_data = \
-                            [ trend(round_num) for round_num in range(round_number, MAX_NUM_ROUNDS + 1) ]
-                        axes.plot(trend_data, product_field_data, color=plot_color, linestyle='dashed',
-                            marker=plot_marker, linewidth=2, markersize=12)
-                graph.tight_layout()
-                print(graph_products)
+                        try:
+                            trend = numpy.poly1d(numpy.polyfit(x_data, y_data, 1))
+                            x_data.append(x_data[-1] + 1)
+                            y_data.append(trend(len(x_data)))
+                        except:
+                            print('failed to trend data')
+                            print('x: {0}\r\ny:{1}'.format(x_data, y_data))
+                            return 0
+                    # plot data w/ visual effects
+                    try:
+                        product_plot, = pyplot.plot(x_data, y_data, color=plot_color, 
+                            linestyle='solid', marker=plot_marker, linewidth=1, markersize=6)
+                        plot_handles.append(product_plot)
+                        y_min = min(y_min, min(y_data))
+                        y_max = max(y_max, max(y_data))
+                    except:
+                        print('failed to plot data')
+                        print('x: {0}\r\ny:{1}'.format(x_data, y_data))
+                        return 0
+                y_padding = math.abs(y_max - y_min) * 0.1
+                y_min = y_min - y_padding
+                y_max = y_max + y_padding
+                pyplot.legend(handles=plot_handles, labels=plot_labels, fontsize='x-small', loc='best', ncol=2)
+                pyplot.title('segment: {0}\n{1}'.format(segment_choice, field_name))
+                pyplot.xticks(x_data, list(map(lambda tick: str(tick), x_data)))
+                pyplot.xlim(xmin=1, xmax=max(x_data))
+                pyplot.ylim(ymin=y_min, ymax=y_max)
+                if display_trends is True:
+                    pyplot.vlines(x=x_data[x_data_origin_size - 1], linestyle='dashdot', \
+                        ymin=y_min, ymax=y_max, colors='black')
+                pyplot.xlabel(x_label)
+                pyplot.grid(True)
+            pyplot.tight_layout()
+            pyplot.show()
         def context_teams():
             pass
         analyze_context : dict = {
@@ -739,7 +776,7 @@ def main(round_number : int, round_year : int):
                 print('* {0} : {1}'.format(context_name, analyze_context[context_name]['desc']))
             print('or enter "menu" to return to the menu')
             while context_choice is None:
-                user_choice = input('cca>product> ').lower()
+                user_choice = input('>>>product> ').lower()
                 if user_choice == 'menu':
                     return -1
                 elif user_choice in analyze_context.keys():
@@ -756,7 +793,7 @@ def main(round_number : int, round_year : int):
         print('Welcome to the Capxamin menu')
         print('Author: John Carr <jxc9224@rit.edu>')
         print('Github: https://github.com/jxc9224/capxamin')
-        print('Enter a command to get started, or "help" to list available commands')
+        print('Enter a command to get started, or "help" to list available commands\r\n')
     def command_clear(arg : any = None, vargs : any = None):
         os.system('cls' if os.name in ('nt', 'dos') else 'clear')
         print_intro()
@@ -765,10 +802,12 @@ def main(round_number : int, round_year : int):
         if file_path is None:
             print('please enter a valid file name')
             return 0
+        if not file_path[len(JSON_EXT)*-1:] == JSON_EXT:
+            file_path = file_path + JSON_EXT
         with open(file_path, 'a') as file:
             file.write(json.dumps({
-                'round_year': round_year,
-                'round_number': round_number,
+                'round_years': round_years,
+                'round_numbers': round_numbers,
                 'company_data': COMPANIES, 
                 'market_data': MARKET_SEGMENTS, 
                 'annual_report': ANNUAL_REPORT
@@ -808,7 +847,7 @@ def main(round_number : int, round_year : int):
     print_intro()
     user_input : str = None
     while True:
-        user_input = input('cca> ').lower().strip()
+        user_input = input('>>> ').lower().strip()
         command = user_input.split(' ')
         command_name = command[0]
         if command_name in commands.keys():
@@ -828,17 +867,15 @@ def main(round_number : int, round_year : int):
 
 if __name__ == '__main__':
     # load input directory or json file
-    round_year : int = 0
-    round_number : int = 0
+    round_years : list = None
+    round_numbers : list = None
     input_path : str = sys.argv[1]
     if os.path.isdir(input_path):
-        round_number, round_year = load_folder(input_path)
+        round_numbers, round_years = load_folder(input_path)
     elif os.path.isfile(input_path) and IS_FILE_EXT(input_path, '.json'):
-        round_number, round_year = load_file(input_path)
+        round_numbers, round_years = load_file(input_path)
     else:
         print('no valid input provided. please input a folder path or json file')
         exit()
     # enter main loop
-    main(round_number, round_year)
-    # exit main loop
-    print('exiting capco. goodbye!')
+    main(round_numbers, round_years)

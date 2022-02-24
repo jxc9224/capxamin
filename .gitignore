@@ -130,3 +130,7 @@ dmypy.json
 
 # local pdf folder
 pdf/
+
+# local files
+*.pdf
+*.cx.json
